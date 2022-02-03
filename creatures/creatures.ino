@@ -1,8 +1,10 @@
 #include <Adafruit_MotorShield.h>
 
-static const float LIGHT_THRESH = 0.5;
-static const float RPM_SCALE = 75.0;
-static const unsigned long HIT_DEBOUNCE_MS = 50;
+static const float LIGHT_THRESH = 0.7;
+static const float RPM_SCALE = 100.0;
+
+static const float PRESS_MIN = 600.0;
+static const float PRESS_MAX = 900.0;
 
 class Smooth {
 
@@ -36,53 +38,39 @@ class Creature {
 
 public:
 
-  Creature(int hitPin, int lightPin, Adafruit_DCMotor *motor) :
-    m_hitPin(hitPin),
+  Creature(int lightPin, int pressPin, Adafruit_DCMotor *motor) :
     m_lightPin(lightPin),
+    m_pressPin(pressPin),
     m_motor(motor)
   {
-    pinMode(hitPin, INPUT);  
-    m_isHit = digitalRead(hitPin);
-
     m_motor->setSpeed(0);
     m_motor->run(FORWARD);
   }
 
   void Update() {
-    updateMotorSpeed(); 
-    detectHit();
+    updateMotorSpeed();
+    updatePressure();
   }
 
 private:
 
-  int m_hitPin;
   int m_lightPin;
+  int m_pressPin;
   Adafruit_DCMotor *m_motor;
-
-  Smooth smooth = Smooth(4.0, 20.0);
-
-  bool m_isHit = false;
-  unsigned long m_lastHitChangeTime = 0;
+  Smooth smooth = Smooth(8.0, 20.0);
 
   void updateMotorSpeed() {
-    // TODO: Generous smoothing/integrator
     float lightAmt = analogRead(m_lightPin) / 1023.0f;
     lightAmt = smooth.Process(lightAmt);
-    m_motor->setSpeed(max(0.0f, (lightAmt - LIGHT_THRESH) * RPM_SCALE));
+    float motorSpeed = ((lightAmt - LIGHT_THRESH) / (1.0 - LIGHT_THRESH)) * RPM_SCALE;
+    m_motor->setSpeed(fmax(0.0, motorSpeed));
   }
 
-  void detectHit() {
-    bool hitDetect = digitalRead(m_hitPin);
-    if (hitDetect != m_isHit) {
-      unsigned long now = millis();
-      if (now - m_lastHitChangeTime > HIT_DEBOUNCE_MS) {
-        m_isHit = hitDetect;
-        m_lastHitChangeTime = now;
-        if (m_isHit) {
-          Serial.println("Hit!");
-        }
-      }
-    }
+  void updatePressure() {
+    float raw = analogRead(m_pressPin);
+    float norm = (raw - PRESS_MIN) / (PRESS_MAX - PRESS_MIN);
+    norm = fmax(0.0, fmin(1.0, norm));
+    Serial.println(norm);
   }
 };
 
@@ -96,7 +84,7 @@ void setup() {
     while (1);
   }
 
-  creature1 = new Creature(D1, A0, motorShield.getMotor(3));
+  creature1 = new Creature(A0, A1, motorShield.getMotor(3));
 }
 
 void loop() {
