@@ -1,10 +1,62 @@
 #include <Adafruit_MotorShield.h>
 
-Adafruit_MotorShield motorShield = Adafruit_MotorShield();
-Adafruit_DCMotor *motor3 = motorShield.getMotor(3);
+static const float LIGHT_THRESH = 0.5;
+static const float RPM_SCALE = 100.0;
+static const unsigned long HIT_DEBOUNCE_MS = 10;
 
-bool isHit = false;
-unsigned long lastHitChangeTime = 0;
+class Creature {
+
+public:
+
+  Creature(int hitPin, int lightPin, Adafruit_DCMotor *motor) :
+    m_hitPin(hitPin),
+    m_lightPin(lightPin),
+    m_motor(motor)
+  {
+    pinMode(hitPin, INPUT);  
+    m_isHit = digitalRead(hitPin);
+
+    m_motor->setSpeed(0);
+    m_motor->run(FORWARD);
+  }
+
+  void Update() {
+    updateMotorSpeed(); 
+    detectHit();
+  }
+
+private:
+
+  int m_hitPin;
+  int m_lightPin;
+  Adafruit_DCMotor *m_motor;
+
+  bool m_isHit = false;
+  unsigned long m_lastHitChangeTime = 0;
+
+  void updateMotorSpeed() {
+    // TODO: Generous smoothing/integrator
+    float lightAmt = analogRead(m_lightPin) / 1023.0f;
+    m_motor->setSpeed(max(0.0f, (lightAmt - LIGHT_THRESH) * RPM_SCALE));
+  }
+
+  void detectHit() {
+    bool hitDetect = digitalRead(m_hitPin);
+    if (hitDetect != m_isHit) {
+      unsigned long now = millis();
+      if (now - m_lastHitChangeTime > HIT_DEBOUNCE_MS) {
+        m_isHit = hitDetect;
+        m_lastHitChangeTime = now;
+        if (m_isHit) {
+          Serial.println("Hit!");
+        }
+      }
+    }
+  }
+};
+
+Adafruit_MotorShield motorShield = Adafruit_MotorShield();
+Creature *creature1;
 
 void setup() {
   Serial.begin(115200);
@@ -13,27 +65,9 @@ void setup() {
     while (1);
   }
 
-  pinMode(D1, INPUT);
-  isHit = digitalRead(D1);
-  motor3->setSpeed(0);
-  motor3->run(FORWARD);
+  creature1 = new Creature(D1, A0, motorShield.getMotor(3));
 }
 
 void loop() {
-  float c1Light = analogRead(A0) / 1023.0;
-//  Serial.println(c1Light);
-  motor3->setSpeed(max(0.0, (c1Light - 0.7) * 500.0));
-
-  bool hitDetect = digitalRead(D1);
-  if (hitDetect != isHit) {
-    unsigned long now = millis();
-    if (now - lastHitChangeTime > 50) {
-      isHit = hitDetect;
-      lastHitChangeTime = now;
-      if (isHit) {
-        Serial.println("Hit!");
-      }
-    }
-  }
-
+  creature1->Update();
 }
