@@ -94,24 +94,24 @@ class CreatureVoice {
 
 public:
 
-  CreatureVoice(float sampleRate) :
-    m_cutoffSmooth(Smooth(0.01, 0.01, sampleRate)) 
+  CreatureVoice(float sampleRate) : 
+    m_pressSmooth(Smooth(2.0, 4.0, sampleRate))
   {
     for (size_t i = 0; i < 4; i++) {
       m_osc[i].Init(sampleRate);
       m_osc[i].SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
-      m_osc[i].SetAmp(0.3);
+      m_osc[i].SetAmp(0.5);
     }
 
     m_chordEnv.Init(sampleRate);
     m_chordEnv.SetTime(ADSR_SEG_ATTACK, 4.0);
-    m_chordEnv.SetTime(ADSR_SEG_RELEASE, 1.0);
+    m_chordEnv.SetTime(ADSR_SEG_RELEASE, 4.0);
     m_chordEnv.SetSustainLevel(1.0);
 
     m_filter.Init(sampleRate);
     m_filter.SetFreq(100.0);
-    m_filter.SetRes(0.3);
-    m_filter.SetDrive(0.5);
+    m_filter.SetRes(0.2);
+    m_filter.SetDrive(0.1);
 
     m_chorus.Init(sampleRate);
     m_chorus.SetDelayMs(10, 12);
@@ -119,12 +119,41 @@ public:
     m_chorus.SetLfoDepth(0.2);
     m_chorus.SetLfoFreq(0.2, 0.3);
     m_chorus.SetPan(0.1, 0.9);
+
+    m_metro.Init(1, sampleRate);
+
+    m_pluckEnv.Init(sampleRate);
+    m_pluckEnv.SetTime(ADENV_SEG_ATTACK, 0.005);
+    m_pluckEnv.SetTime(ADENV_SEG_DECAY, 0.1);
+
+    m_fm.Init(sampleRate);
+    m_fm.SetRatio(3.0);
+    m_fm.SetIndex(0.0);
+
+    m_del.Init();
+    m_del.SetDelay((size_t)12000);
   }
 
-  void SetChordGate(bool gate) {
+  void SetMotorAmt(float motorAmt) {
+    m_motorAmt = motorAmt;
+  }
+
+  void SetPressAmt(float pressAmt) {
+    // heavy curve
+    m_pressure = powf(pressAmt, 4.0);
+  }
+
+  void Process() {
+
+    // chords
+    float chordSamp = 0.0;
+    for (size_t i = 0; i < 4; i++) {
+      chordSamp += m_osc[i].Process();
+    }
+
+    float smoothPressure = m_pressSmooth.Process(m_pressure);
+    bool gate = smoothPressure > 0.01;
     if (gate != m_chordGate) {
-      Serial.print("Chord gate ");
-      Serial.println(gate ? "on" : "off");
       if (gate) {
          for (size_t i = 0; i < 4; i++) {
            m_osc[i].SetFreq(mtof(chords[m_chordIndex][i]));
@@ -134,24 +163,37 @@ public:
       }
       m_chordGate = gate;
     }
-  }
-
-  void SetCutoff(float cutoff) {
-    m_filter.SetFreq(m_cutoffSmooth.Process(cutoff));
-  }
-
-  void Process() {
-    float output = 0.0;
-    for (size_t i = 0; i < 4; i++) {
-      output += m_osc[i].Process();
-    }
-    m_filter.Process(output);
     
-    output = m_filter.Low() * m_chordEnv.Process(m_chordGate) * 0.5;
-    m_chorus.Process(output);
+    m_filter.SetFreq(100.0 + smoothPressure * 5000.0);
+    m_filter.Process(chordSamp);
+    
+    chordSamp = m_filter.Low() * m_chordEnv.Process(m_chordGate);
+    m_chorus.Process(chordSamp);
 
-    m_outL = m_chorus.GetLeft();
-    m_outR = m_chorus.GetRight();
+    // -- pluck --
+
+    m_metro.SetFreq(1.0 + 20.0 * m_motorAmt);
+    if (m_metro.Process()) { 
+      if (m_prob.Process(0.8) > 0.0) {
+        int note = chords[m_chordIndex][m_pluckIndex] + 12;
+        note += random(-1, 1) * 12;
+        m_fm.SetFrequency(mtof(note));
+        m_pluckEnv.Trigger();
+      }
+      m_pluckIndex = (m_pluckIndex + 1) % 4;
+    }
+
+    m_fm.SetIndex(m_motorAmt * 0.5);
+    float pluckSamp = m_fm.Process() * m_pluckEnv.Process() * m_motorAmt * 0.1;
+
+    float delayOutL = m_del.Read();
+    float delayOutR = m_del.Read(6000.0);
+    m_del.Write(pluckSamp + 0.3 * delayOutL);
+
+    // -- sum --
+
+    m_outL = m_chorus.GetLeft() + pluckSamp + delayOutL * 0.25;
+    m_outR = m_chorus.GetRight() + pluckSamp + delayOutR * 0.25;
   }
 
   float GetL() { return m_outL; }
@@ -172,10 +214,21 @@ private:
   Adsr m_chordEnv;
   Svf m_filter;
   Chorus m_chorus;
+
+  int m_pluckIndex = 0;
   
-  Smooth m_cutoffSmooth;
-  
+  Metro m_metro;
+  Maytrig m_prob;
+  AdEnv m_pluckEnv;
+  Fm2 m_fm;
+  DelayLine<float, 12000> m_del;
+
   bool m_chordGate = false;
+  float m_pressure;
+  float m_motorAmt;
+  
+  Smooth m_pressSmooth;
+  
   float m_outL = 0.0;
   float m_outR = 0.0;
 };
@@ -198,7 +251,7 @@ void AudioCallback(float **in, float **out, size_t size) {
 }
 
 void setup() {
-  Serial.begin(115200);
+//  Serial.begin(115200);
   dsp = DAISY.init(DAISY_SEED, AUDIO_SR_48K);
   num_channels = dsp.num_channels;
   
@@ -216,7 +269,9 @@ void loop() {
   creature1->Update();
 
   float motorSpeed = creature1->GetMotorSpeed();
-  creatureVoice->SetChordGate(motorSpeed > 0.05);
-  creatureVoice->SetCutoff(100.0 + powf(motorSpeed, 1.5) * 5000.0);
+  float pressure = creature1->GetPressure();
+  
+  creatureVoice->SetMotorAmt(motorSpeed);
+  creatureVoice->SetPressAmt(creature1->GetPressure());
   delay(10);
 }
