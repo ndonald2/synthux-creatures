@@ -1,3 +1,4 @@
+#include "DaisyDuino.h"
 #include <Adafruit_MotorShield.h>
 
 static const float LIGHT_THRESH = 0.6;
@@ -87,16 +88,32 @@ private:
   }
 };
 
+DaisyHardware dsp;
+size_t num_channels;
+
 Adafruit_MotorShield motorShield = Adafruit_MotorShield();
 Creature *creature1;
 
+void AudioCallback(float **in, float **out, size_t size) {
+  for (size_t i = 0; i < size; i++) {
+    for (size_t chn = 0; chn < num_channels; chn++) {
+      out[chn][i] = 0.0;
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  dsp = DAISY.init(DAISY_SEED, AUDIO_SR_48K);
+  num_channels = dsp.num_channels;
+  
   if (!motorShield.begin()) {
       Serial.println("Could not find Motor Shield. Check wiring.");
     while (1);
   }
   creature1 = new Creature(A0, A1, A2, D30, motorShield.getMotor(3));
+
+  DAISY.begin(AudioCallback);
 }
 
 void loop() {
