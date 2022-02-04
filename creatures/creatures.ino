@@ -133,8 +133,8 @@ public:
     m_metro.Init(1, sampleRate);
 
     m_pluckEnv.Init(sampleRate);
-    m_pluckEnv.SetTime(ADENV_SEG_ATTACK, 0.005);
-    m_pluckEnv.SetTime(ADENV_SEG_DECAY, 0.1);
+    m_pluckEnv.SetTime(ADENV_SEG_ATTACK, 0.002);
+    m_pluckEnv.SetTime(ADENV_SEG_DECAY, 0.25);
 
     m_fm.Init(sampleRate);
     m_fm.SetRatio(4.0);
@@ -183,6 +183,8 @@ public:
     // -- pluck --
 
     m_metro.SetFreq(1.0 + 20.0 * m_motorAmt);
+    m_pluckEnv.SetTime(ADENV_SEG_DECAY, 0.25 - m_motorAmt * 0.2);
+    
     if (m_metro.Process()) { 
       if (m_prob.Process(0.8) > 0.0) {
         int note = chords[m_chordIndex][m_pluckIndex] + 12;
@@ -194,7 +196,7 @@ public:
     }
 
     m_fm.SetIndex(m_motorAmt * 0.5);
-    float pluckSamp = m_fm.Process() * m_pluckEnv.Process() * m_motorAmt * 0.1;
+    float pluckSamp = m_fm.Process() * m_pluckEnv.Process() * m_motorAmt * 0.18;
 
     float delayOutL = m_del.Read();
     float delayOutR = m_del.Read(6000.0);
