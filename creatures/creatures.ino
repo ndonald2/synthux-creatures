@@ -9,13 +9,17 @@ static const float PRESS_MAX = 850.0;
 class Smooth {
 
 public:
-  Smooth(float t60Rise, float t60Fall, float sampleRate) :
+  Smooth(float t60Rise, float t60Fall) :
     m_t60Rise(t60Rise),
-    m_t60Fall(t60Fall),
-    m_sampleInterval(1.0 / sampleRate)
+    m_t60Fall(t60Fall)
   {}
 
+  void Init(float sampleRate) {
+    m_sampleInterval = 1.0 / sampleRate;
+  }
+
   float Process(float input) {
+    if (m_sampleInterval == 0.0) { return input; }
     float t60 = input > m_y ? m_t60Rise : m_t60Fall;
     float r = 1.0 - ((6.91 * m_sampleInterval) / t60);
     m_y = input * (1.0 - r) + m_y * r;
@@ -25,7 +29,7 @@ public:
 private:
   float m_t60Rise;
   float m_t60Fall;
-  float m_sampleInterval;
+  float m_sampleInterval = 0.0;
   float m_y = 0.0;
 };
 
@@ -33,19 +37,22 @@ class Creature {
 
 public:
 
-  Creature(
-    int lightPin, 
-    int pressPin, 
-    int vibePin, 
-    Adafruit_DCMotor *motor
-  ) : m_lightPin(lightPin),
-      m_pressPin(pressPin),
-      m_vibePin(vibePin),
-      m_motor(motor)
+  Creature(int lightPin, int pressPin, int vibePin) : 
+    m_lightPin(lightPin),
+    m_pressPin(pressPin),
+    m_vibePin(vibePin)
   {
     pinMode(vibePin, OUTPUT);
+  }
+
+  void Init(Adafruit_DCMotor *motor) {
+    m_motor = motor;
     m_motor->run(FORWARD);
     m_motor->setSpeed(0);
+
+    // Sample rate of 500Hz is a (very) gross approximation since
+    // Update() loop frequency is variable/indeterminate
+    m_smooth.Init(500.0);
   }
 
   float GetPressure() {
@@ -71,10 +78,10 @@ private:
   float m_motorSpeed = 0.0; // normalized 0-1
   
   Adafruit_DCMotor *m_motor;
-  Smooth smooth = Smooth(2.0, 10.0, 500.0);
+  Smooth m_smooth = Smooth(2.0, 10.0);
 
   void updateMotorSpeed() {
-    float lightRaw = smooth.Process(analogRead(m_lightPin) / 1023.0f);
+    float lightRaw = m_smooth.Process(analogRead(m_lightPin) / 1023.0f);
     m_motorSpeed = fmax(0.0, (lightRaw - LIGHT_THRESH) / (1.0 - LIGHT_THRESH));
     
     float rpm = m_motorSpeed * RPM_SCALE;
@@ -94,9 +101,12 @@ class CreatureVoice {
 
 public:
 
-  CreatureVoice(float sampleRate) : 
-    m_pressSmooth(Smooth(2.0, 4.0, sampleRate))
-  {
+  CreatureVoice() {}
+
+  void Init(float sampleRate) {
+
+    m_pressSmooth.Init(sampleRate);
+    
     for (size_t i = 0; i < 4; i++) {
       m_osc[i].Init(sampleRate);
       m_osc[i].SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
@@ -105,7 +115,7 @@ public:
 
     m_chordEnv.Init(sampleRate);
     m_chordEnv.SetTime(ADSR_SEG_ATTACK, 4.0);
-    m_chordEnv.SetTime(ADSR_SEG_RELEASE, 4.0);
+    m_chordEnv.SetTime(ADSR_SEG_RELEASE, 3.0);
     m_chordEnv.SetSustainLevel(1.0);
 
     m_filter.Init(sampleRate);
@@ -127,7 +137,7 @@ public:
     m_pluckEnv.SetTime(ADENV_SEG_DECAY, 0.1);
 
     m_fm.Init(sampleRate);
-    m_fm.SetRatio(3.0);
+    m_fm.SetRatio(4.0);
     m_fm.SetIndex(0.0);
 
     m_del.Init();
@@ -176,7 +186,7 @@ public:
     if (m_metro.Process()) { 
       if (m_prob.Process(0.8) > 0.0) {
         int note = chords[m_chordIndex][m_pluckIndex] + 12;
-        note += random(-1, 1) * 12;
+        note += random(-1, 2) * 12;
         m_fm.SetFrequency(mtof(note));
         m_pluckEnv.Trigger();
       }
@@ -227,7 +237,7 @@ private:
   float m_pressure;
   float m_motorAmt;
   
-  Smooth m_pressSmooth;
+  Smooth m_pressSmooth = Smooth(2.0, 4.0);
   
   float m_outL = 0.0;
   float m_outR = 0.0;
@@ -237,15 +247,16 @@ private:
 DaisyHardware dsp;
 size_t num_channels;
 
+static Creature creature1 = Creature(A0, A1, A2);
+static CreatureVoice creatureVoice;
+
 Adafruit_MotorShield motorShield = Adafruit_MotorShield();
-Creature *creature1;
-CreatureVoice *creatureVoice;
 
 void AudioCallback(float **in, float **out, size_t size) {
   for (size_t i = 0; i < size; i++) {
-    creatureVoice->Process();
+    creatureVoice.Process();
     for (size_t chn = 0; chn < num_channels; chn++) {
-      out[chn][i] = chn == 0 ? creatureVoice->GetL() : creatureVoice->GetR();
+      out[chn][i] = chn == 0 ? creatureVoice.GetL() : creatureVoice.GetR();
     }
   }
 }
@@ -259,19 +270,19 @@ void setup() {
       Serial.println("Could not find Motor Shield. Check wiring.");
     while (1);
   }
-  creature1 = new Creature(A0, A1, A2, motorShield.getMotor(3));
-  creatureVoice = new CreatureVoice(DAISY.get_samplerate());
+  creature1.Init(motorShield.getMotor(3));
+  creatureVoice.Init(DAISY.get_samplerate());
 
   DAISY.begin(AudioCallback);
 }
 
 void loop() {
-  creature1->Update();
+  creature1.Update();
 
-  float motorSpeed = creature1->GetMotorSpeed();
-  float pressure = creature1->GetPressure();
+  float motorSpeed = creature1.GetMotorSpeed();
+  float pressure = creature1.GetPressure();
   
-  creatureVoice->SetMotorAmt(motorSpeed);
-  creatureVoice->SetPressAmt(creature1->GetPressure());
+  creatureVoice.SetMotorAmt(motorSpeed);
+  creatureVoice.SetPressAmt(creature1.GetPressure());
   delay(10);
 }
