@@ -2,7 +2,7 @@
 #include <Adafruit_MotorShield.h>
 
 static const float LIGHT_THRESH = 0.6;
-static const float RPM_SCALE = 100.0;
+static const float RPM_SCALE = 200.0;
 static const float PRESS_MIN = 650.0;
 static const float PRESS_MAX = 850.0;
 
@@ -44,8 +44,8 @@ public:
       m_motor(motor)
   {
     pinMode(vibePin, OUTPUT);
-    m_motor->setSpeed(0);
     m_motor->run(FORWARD);
+    m_motor->setSpeed(0);
   }
 
   float GetPressure() {
@@ -71,7 +71,7 @@ private:
   float m_motorSpeed = 0.0; // normalized 0-1
   
   Adafruit_DCMotor *m_motor;
-  Smooth smooth = Smooth(10.0, 30.0, 2000.0);
+  Smooth smooth = Smooth(2.0, 10.0, 500.0);
 
   void updateMotorSpeed() {
     float lightRaw = smooth.Process(analogRead(m_lightPin) / 1023.0f);
@@ -111,7 +111,14 @@ public:
     m_filter.Init(sampleRate);
     m_filter.SetFreq(100.0);
     m_filter.SetRes(0.3);
-    m_filter.SetDrive(0.1);
+    m_filter.SetDrive(0.5);
+
+    m_chorus.Init(sampleRate);
+    m_chorus.SetDelayMs(10, 12);
+    m_chorus.SetFeedback(0.3);
+    m_chorus.SetLfoDepth(0.2);
+    m_chorus.SetLfoFreq(0.2, 0.3);
+    m_chorus.SetPan(0.1, 0.9);
   }
 
   void SetChordGate(bool gate) {
@@ -133,7 +140,7 @@ public:
     m_filter.SetFreq(m_cutoffSmooth.Process(cutoff));
   }
 
-  float Process() {
+  void Process() {
     float output = 0.0;
     for (size_t i = 0; i < 4; i++) {
       output += m_osc[i].Process();
@@ -141,16 +148,21 @@ public:
     m_filter.Process(output);
     
     output = m_filter.Low() * m_chordEnv.Process(m_chordGate) * 0.5;
-    
-    return output;
+    m_chorus.Process(output);
+
+    m_outL = m_chorus.GetLeft();
+    m_outR = m_chorus.GetRight();
   }
+
+  float GetL() { return m_outL; }
+  float GetR() { return m_outR; }
 
 private:
 
   const int chords[4][4] = {
       {45, 61, 64, 66},
       {45, 56, 61, 64},
-      {45, 61, 64, 66},
+      {52, 61, 64, 68},
       {45, 56, 61, 64}
   };
 
@@ -158,11 +170,14 @@ private:
 
   Oscillator m_osc[4];
   Adsr m_chordEnv;
-  
   Svf m_filter;
+  Chorus m_chorus;
+  
   Smooth m_cutoffSmooth;
   
   bool m_chordGate = false;
+  float m_outL = 0.0;
+  float m_outR = 0.0;
 };
 
 
@@ -175,9 +190,9 @@ CreatureVoice *creatureVoice;
 
 void AudioCallback(float **in, float **out, size_t size) {
   for (size_t i = 0; i < size; i++) {
-    float samp = creatureVoice->Process();
+    creatureVoice->Process();
     for (size_t chn = 0; chn < num_channels; chn++) {
-      out[chn][i] = samp;
+      out[chn][i] = chn == 0 ? creatureVoice->GetL() : creatureVoice->GetR();
     }
   }
 }
@@ -203,4 +218,5 @@ void loop() {
   float motorSpeed = creature1->GetMotorSpeed();
   creatureVoice->SetChordGate(motorSpeed > 0.05);
   creatureVoice->SetCutoff(100.0 + powf(motorSpeed, 1.5) * 5000.0);
+  delay(10);
 }
