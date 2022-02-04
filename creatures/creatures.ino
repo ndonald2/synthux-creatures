@@ -267,8 +267,14 @@ void setup() {
   num_channels = dsp.num_channels;
   
   if (!motorShield.begin()) {
-      Serial.println("Could not find Motor Shield. Check wiring.");
-    while (1);
+//  Serial.println("Could not find Motor Shield. Check wiring.");
+    pinMode(LED_BUILTIN, OUTPUT);
+    while (1) {
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(250);
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(250);
+    }
   }
   creature1.Init(motorShield.getMotor(3));
   creatureVoice.Init(DAISY.get_samplerate());
@@ -283,6 +289,7 @@ void loop() {
   float pressure = creature1.GetPressure();
   
   creatureVoice.SetMotorAmt(motorSpeed);
-  creatureVoice.SetPressAmt(creature1.GetPressure());
+  creatureVoice.SetPressAmt(pressure);
+  
   delay(10);
 }
