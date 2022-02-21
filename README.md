@@ -1,6 +1,6 @@
-# SynthUx Hackathon Project 2022 - "Troglophonic"
+# SynthUX Hackathon Project 2022 - "Troglophonic"
 
-This repo contains the software for my SynthUX hackday 2022 project.
+This repo contains the software for my SynthUX hackathon 2022 project.
 
 
 ## Build Prerequisites
